@@ -1,0 +1,13 @@
+export { LoginPage } from './LoginPage';
+export { DataEntryPage } from './DataEntryPage';
+export { DashboardPage } from './DashboardPage';
+export { AnalyticsPage } from './AnalyticsPage';
+export { UstazesPage } from './UstazesPage';
+export { QuestionsPage } from './QuestionsPage';
+export { EvaluationsPage } from './EvaluationsPage';
+export { CommentsPage } from './CommentsPage';
+export { UsersPage } from './UsersPage';
+export { AuditLogsPage } from './AuditLogsPage';
+export { SettingsPage } from './SettingsPage';
+export { MyEntriesPage } from './MyEntriesPage';
+export { MyActivityPage } from './MyActivityPage';

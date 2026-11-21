@@ -67,6 +67,26 @@ BEGIN
     now()
   );
 
+  INSERT INTO auth.identities (
+    id,
+    provider_id,
+    user_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
+  ) VALUES (
+    new_uid,
+    new_uid,
+    new_uid,
+    jsonb_build_object('sub', new_uid, 'email', LOWER(user_email)),
+    'email',
+    now(),
+    now(),
+    now()
+  );
+
   INSERT INTO public.profiles (id, full_name, role, is_active)
   VALUES (new_uid, user_full_name, user_role, true)
   ON CONFLICT (id) DO UPDATE 
@@ -79,3 +99,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 SELECT seed_user_account('admin@medersa.org', 'AdminPass123!', 'Chief Administrator', 'admin');
 SELECT seed_user_account('entry1@medersa.org', 'EntryPass123!', 'Data Entry Officer 1', 'data_entry');
 SELECT seed_user_account('entry2@medersa.org', 'EntryPass123!', 'Data Entry Officer 2', 'data_entry');
+SELECT seed_user_account('fekru@mederesa.org', 'EntryPass123!', 'Fekrudin Muzemil', 'data_entry');

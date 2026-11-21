@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/ui/Toast';
 import { supabase } from '../lib/supabase';
-import { EvaluationGroup, Ustaz, EvaluationQuestion, EvaluationTemplate, QuestionChoice } from '../types';
+import { EvaluationGroup, Ustaz, EvaluationQuestion, EvaluationTemplate, QuestionChoice, QualitativeFeedback } from '../types';
 import { GroupSelector, SearchableSelect, PageHeader } from '../components/ui';
 import { LoadingSpinner } from '../components/ui/LoadingSpinner';
 import {
@@ -12,6 +12,8 @@ import {
   Keyboard,
   ChevronRight,
   Sparkles,
+  MessageSquare,
+  UserCheck,
 } from 'lucide-react';
 
 interface SelectedAnswer {
@@ -36,8 +38,22 @@ export function DataEntryPage() {
 
   // Answers: map questionId -> SelectedAnswer
   const [answers, setAnswers] = useState<Record<string, SelectedAnswer>>({});
-  const [comments, setComments] = useState('');
   const [focusedQuestionIndex, setFocusedQuestionIndex] = useState(0);
+
+  // 7 Open Feedback Questions
+  const [feedback, setFeedback] = useState<QualitativeFeedback>({
+    ustaz_strengths: '',
+    ustaz_improvements: '',
+    ustaz_additional: '',
+    assistant_name: '',
+    assistant_strengths: '',
+    assistant_improvements: '',
+    assistant_additional: '',
+  });
+
+  const handleFeedbackChange = (key: keyof QualitativeFeedback, value: string) => {
+    setFeedback((prev) => ({ ...prev, [key]: value }));
+  };
 
   // UI state
   const [loading, setLoading] = useState(true);
@@ -46,8 +62,8 @@ export function DataEntryPage() {
   const [savedCount, setSavedCount] = useState(0);
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  const commentsRef = useRef<HTMLTextAreaElement>(null);
   const questionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const firstFeedbackRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Load groups on mount
   useEffect(() => {
@@ -138,14 +154,13 @@ export function DataEntryPage() {
     if (data) setUstazes(data);
   };
 
-  // Calculate scores
+  // Calculate scores purely out of 90 (no comment marks)
   const calculateScore = useCallback(() => {
     let questionsScore = 0;
-    let questionsMax = 0;
+    let questionsMax = 90; // The 11 questions sum to 90
     let answeredCount = 0;
 
     questions.forEach((q) => {
-      questionsMax += Number(q.maximum_mark) || 0;
       const ans = answers[q.id];
       if (ans) {
         questionsScore += Number(ans.mark) || 0;
@@ -153,11 +168,9 @@ export function DataEntryPage() {
       }
     });
 
-    // Total score is out of 100 (90 from questions + 10 from comments evaluation)
-    const totalMax = 100;
-    const projectedPercentage = Math.round((questionsScore / totalMax) * 1000) / 10;
+    const projectedPercentage = questionsMax > 0 ? Math.round((questionsScore / questionsMax) * 1000) / 10 : 0;
 
-    return { questionsScore, questionsMax, totalMax, projectedPercentage, answeredCount };
+    return { questionsScore, questionsMax, totalMax: questionsMax, projectedPercentage, answeredCount };
   }, [questions, answers]);
 
   const { questionsScore, questionsMax, totalMax, projectedPercentage, answeredCount } = calculateScore();
@@ -165,7 +178,6 @@ export function DataEntryPage() {
   // Keyboard navigation & fast letter selection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement === commentsRef.current) return;
       if (
         document.activeElement?.tagName === 'INPUT' ||
         document.activeElement?.tagName === 'TEXTAREA'
@@ -224,7 +236,7 @@ export function DataEntryPage() {
         case 'Tab':
           if (!e.shiftKey && focusedQuestionIndex === questions.length - 1) {
             e.preventDefault();
-            commentsRef.current?.focus();
+            firstFeedbackRef.current?.focus();
           }
           break;
       }
@@ -258,7 +270,15 @@ export function DataEntryPage() {
 
   const clearForm = () => {
     setAnswers({});
-    setComments('');
+    setFeedback({
+      ustaz_strengths: '',
+      ustaz_improvements: '',
+      ustaz_additional: '',
+      assistant_name: '',
+      assistant_strengths: '',
+      assistant_improvements: '',
+      assistant_additional: '',
+    });
     setFocusedQuestionIndex(0);
   };
 
@@ -321,10 +341,21 @@ export function DataEntryPage() {
         };
       });
 
-      // Total score out of 100
-      const totalScore = finalQuestionsScore; // comments_score starts at 0 until reviewed by admin
-      const maxScore = 100;
+      // Total score is out of 90 (purely based on multiple choice questions, no comment marks)
+      const totalScore = finalQuestionsScore;
+      const maxScore = 90;
       const percentage = Math.round((totalScore / maxScore) * 1000) / 10;
+
+      // Combined readable comments for fast full-text searching
+      const feedbackParts: string[] = [];
+      if (feedback.ustaz_strengths?.trim()) feedbackParts.push(`[ጥሩ ጎን]: ${feedback.ustaz_strengths.trim()}`);
+      if (feedback.ustaz_improvements?.trim()) feedbackParts.push(`[መሻሻል ያለበት]: ${feedback.ustaz_improvements.trim()}`);
+      if (feedback.ustaz_additional?.trim()) feedbackParts.push(`[ተጨማሪ]: ${feedback.ustaz_additional.trim()}`);
+      if (feedback.assistant_name?.trim()) feedbackParts.push(`[አጋዥ ስም]: ${feedback.assistant_name.trim()}`);
+      if (feedback.assistant_strengths?.trim()) feedbackParts.push(`[አጋዥ ጥሩ ጎን]: ${feedback.assistant_strengths.trim()}`);
+      if (feedback.assistant_improvements?.trim()) feedbackParts.push(`[አጋዥ መሻሻል ያለበት]: ${feedback.assistant_improvements.trim()}`);
+      if (feedback.assistant_additional?.trim()) feedbackParts.push(`[አጋዥ ተጨማሪ]: ${feedback.assistant_additional.trim()}`);
+      const combinedComments = feedbackParts.join(' | ');
 
       // Insert evaluation
       const { data: evalData, error: evalError } = await supabase
@@ -338,7 +369,8 @@ export function DataEntryPage() {
           total_score: totalScore,
           maximum_score: maxScore,
           percentage: percentage,
-          comments: comments.trim(),
+          comments: combinedComments,
+          feedback_answers: feedback,
           entered_by: user!.id,
         })
         .select('id')
@@ -615,31 +647,137 @@ export function DataEntryPage() {
             </div>
           </div>
 
-          {/* Comments Section */}
-          <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
-                አስተያየት / ማስታወሻ (Written Comments / Notes from Paper)
-              </label>
-              {isAdmin ? (
-                <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-semibold">
-                  Admin grades comments out of 10 points
-                </span>
-              ) : (
-                <span className="text-xs text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded font-medium">
-                  ከተማሪው ወረቀት የተጻፈ አስተያየት ካለ እዚህ ይቅዱ
-                </span>
-              )}
+          {/* Section 4: Main Ustaz Qualitative Feedback (3 questions) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                  ክፍል 4 — በዋናው ኡስታዝ/ኡስታዟ ላይ የተማሪዎች አስተያየት
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-full font-medium">
+                ከተማሪው ወረቀት የተጻፈ ካለ ብቻ ይቅዱ
+              </span>
             </div>
-            <textarea
-              ref={commentsRef}
-              rows={3}
-              value={comments}
-              onChange={(e) => setComments(e.target.value)}
-              placeholder="Copy any handwritten feedback or comments from the paper form (English, አማርኛ, العربية)..."
-              className="w-full px-3.5 py-2.5 text-base sm:text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-              dir="auto"
-            />
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  1. በኡስታዙ ትምህርት አሰጣጥ ላይ በጣም የምትወዱት (ጥሩ ጎኑ) ምንድን ነው?
+                </label>
+                <textarea
+                  ref={firstFeedbackRef}
+                  rows={2}
+                  value={feedback.ustaz_strengths || ''}
+                  onChange={(e) => handleFeedbackChange('ustaz_strengths', e.target.value)}
+                  placeholder="የኡስታዙን ጥሩ ጎን ከተማሪው ወረቀት እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  2. ኡስታዙ እንዲያስተካክለው ወይም እንዲያሻሽለው የምትፈልጉት ነገር (መጥፎ ጎኑ) ምንድን ነው?
+                </label>
+                <textarea
+                  rows={2}
+                  value={feedback.ustaz_improvements || ''}
+                  onChange={(e) => handleFeedbackChange('ustaz_improvements', e.target.value)}
+                  placeholder="መስተካከል ያለበትን ነገር ከተማሪው ወረቀት እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  3. ተጨማሪ አስተያየት ካላችሁ፡
+                </label>
+                <textarea
+                  rows={2}
+                  value={feedback.ustaz_additional || ''}
+                  onChange={(e) => handleFeedbackChange('ustaz_additional', e.target.value)}
+                  placeholder="ተጨማሪ አስተያየት ካለ እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Assistant Ustaz Qualitative Feedback (4 questions) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <UserCheck className="w-5 h-5 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
+                  ክፍል 5 — በአጋዥ ኡስታዝ/ኡስታዟ ላይ የተማሪዎች አስተያየት
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-full font-medium">
+                አጋዥ ኡስታዝ ካለ ብቻ ይሞላል
+              </span>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  4. የአጋዥ ኡስታዙ/የኡስታዟ ስም፡
+                </label>
+                <input
+                  type="text"
+                  value={feedback.assistant_name || ''}
+                  onChange={(e) => handleFeedbackChange('assistant_name', e.target.value)}
+                  placeholder="የአጋዥ ኡስታዙን ስም ያስገቡ..."
+                  className="w-full px-3.5 py-2.5 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  5. በአጋዥ ኡስታዙ ላይ የሚታዩ ጥሩ ነገሮች (ጥሩ ጎኑ) ምንድን ነው?
+                </label>
+                <textarea
+                  rows={2}
+                  value={feedback.assistant_strengths || ''}
+                  onChange={(e) => handleFeedbackChange('assistant_strengths', e.target.value)}
+                  placeholder="የአጋዥ ኡስታዙን ጥሩ ጎን እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  6. በአጋዥ ኡስታዙ ላይ የሚታዩ መጥፎ ነገሮች (መጥፎ ጎኑ) ምንድን ነው?
+                </label>
+                <textarea
+                  rows={2}
+                  value={feedback.assistant_improvements || ''}
+                  onChange={(e) => handleFeedbackChange('assistant_improvements', e.target.value)}
+                  placeholder="በአጋዥ ኡስታዙ መሻሻል ያለበትን ነገር እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1" dir="auto">
+                  7. በአጋዥ ኡስታዙ ተጨማሪ አስተያየት ካላችሁ፡
+                </label>
+                <textarea
+                  rows={2}
+                  value={feedback.assistant_additional || ''}
+                  onChange={(e) => handleFeedbackChange('assistant_additional', e.target.value)}
+                  placeholder="ለአጋዥ ኡስታዙ ተጨማሪ አስተያየት እዚህ ይቅዱ..."
+                  className="w-full px-3.5 py-2 text-base sm:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50/50 focus:bg-white transition"
+                  dir="auto"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Sticky Bottom Scoring & Submit Bar */}
@@ -735,12 +873,12 @@ export function DataEntryPage() {
                 </button>
               </div>
             ) : (
-              /* Admin View: Full marks breakdown */
+              /* Admin View: Out of 90 points */
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 w-full">
                 <div className="flex items-center gap-5">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">
-                      Questions Score
+                      Total Questions Score
                     </span>
                     <p className="text-2xl font-bold text-slate-900 leading-tight">
                       {questionsScore}{' '}
@@ -752,22 +890,10 @@ export function DataEntryPage() {
 
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">
-                      Comments Mark
+                      Overall Percentage
                     </span>
-                    <p className="text-sm font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                      + / 10 (Admin)
-                    </p>
-                  </div>
-
-                  <div className="h-8 w-px bg-slate-200" />
-
-                  <div>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">
-                      Total Potential
-                    </span>
-                    <p className="text-xl font-bold text-slate-800">
-                      {questionsScore} / {totalMax}{' '}
-                      <span className="text-xs text-emerald-600 font-semibold">({projectedPercentage}%)</span>
+                    <p className="text-xl font-bold text-emerald-700">
+                      {projectedPercentage}%
                     </p>
                   </div>
                 </div>

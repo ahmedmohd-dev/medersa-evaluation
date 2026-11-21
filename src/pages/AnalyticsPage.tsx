@@ -629,7 +629,7 @@ export function AnalyticsPage({ group }: AnalyticsPageProps) {
               <div>
                 <span className="text-xs text-slate-400 uppercase font-semibold">Average Score</span>
                 <p className="text-xl font-bold text-slate-800 mt-1">
-                  {selectedUstaz.average_score} / 100
+                  {selectedUstaz.average_score} / 90
                 </p>
               </div>
               <div>

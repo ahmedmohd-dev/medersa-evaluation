@@ -1,394 +1,620 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { EvaluationGroup, Ustaz } from '../types';
+import { EvaluationGroup, Ustaz, QualitativeFeedback } from '../types';
 import {
   PageHeader,
   GroupSelector,
   LoadingSpinner,
   EmptyState,
-  Pagination,
 } from '../components/ui';
-import { exportCommentsToExcel } from '../lib/excel';
-import { MessageSquare, Search, Download, Award, CheckCircle2 } from 'lucide-react';
+import { exportAggregatedFeedbackToExcel } from '../lib/excel';
+import {
+  MessageSquare,
+  Search,
+  Download,
+  ThumbsUp,
+  AlertTriangle,
+  MessageCircle,
+  UserCheck,
+  GraduationCap,
+  Sparkles,
+  FileText,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 
-const PAGE_SIZE = 15;
+interface FeedbackItem {
+  evaluation_id: string;
+  created_at: string;
+  feedback: QualitativeFeedback;
+  legacy_comments?: string;
+}
+
+interface UstazFeedbackReport {
+  ustaz_id: string;
+  ustaz_name: string;
+  group_id: string;
+  group_name: string;
+  group_display: string;
+  total_evaluations: number;
+  total_feedback_count: number;
+  feedbacks: FeedbackItem[];
+}
 
 export function CommentsPage() {
-  const { user, isAdmin } = useAuth();
+  const { isAdmin } = useAuth();
 
-  const [comments, setComments] = useState<any[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
+  const [reports, setReports] = useState<UstazFeedbackReport[]>([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-
-  // Filters
   const [selectedGroup, setSelectedGroup] = useState<'boys' | 'girls' | 'all'>('all');
-  const [selectedUstazId, setSelectedUstazId] = useState('');
+  const [selectedUstazId, setSelectedUstazId] = useState<string>('all');
   const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-
-  // Dropdown data
-  const [groups, setGroups] = useState<EvaluationGroup[]>([]);
-  const [ustazes, setUstazes] = useState<Ustaz[]>([]);
   const [exporting, setExporting] = useState(false);
-
-  // Grading state per card
-  const [editingGrade, setEditingGrade] = useState<Record<string, number>>({});
-  const [savingGradeId, setSavingGradeId] = useState<string | null>(null);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    loadFilterOptions();
-  }, []);
+    loadFeedbackReports();
+  }, [selectedGroup]);
 
-  useEffect(() => {
-    loadComments();
-  }, [page, selectedGroup, selectedUstazId, search, dateFrom, dateTo]);
-
-  const loadFilterOptions = async () => {
-    try {
-      const [grpRes, ustazRes] = await Promise.all([
-        supabase.from('evaluation_groups').select('*'),
-        supabase.from('ustazes').select('*').order('name'),
-      ]);
-      if (grpRes.data) setGroups(grpRes.data);
-      if (ustazRes.data) setUstazes(ustazRes.data);
-    } catch (err) {
-      console.error('Error loading filters:', err);
-    }
-  };
-
-  const loadComments = async () => {
+  const loadFeedbackReports = async () => {
     setLoading(true);
     try {
-      let query = supabase
+      // Fetch ustazes with group
+      let ustazQuery = supabase
+        .from('ustazes')
+        .select('id, name, group_id, evaluation_groups(id, name, display_name)')
+        .eq('is_active', true)
+        .order('name');
+
+      const { data: ustazList, error: ustazErr } = await ustazQuery;
+      if (ustazErr) throw ustazErr;
+
+      // Filter by group if needed
+      let filteredUstazes = ustazList || [];
+      if (selectedGroup !== 'all') {
+        filteredUstazes = filteredUstazes.filter(
+          (u: any) => u.evaluation_groups?.name === selectedGroup
+        );
+      }
+
+      // Fetch all evaluations with feedback_answers and legacy comments
+      const { data: evalList, error: evalErr } = await supabase
         .from('evaluations')
-        .select(
-          `
-          id,
-          comments,
-          questions_score,
-          comments_score,
-          total_score,
-          maximum_score,
-          percentage,
-          comments_reviewed_at,
-          created_at,
-          ustazes(id, name),
-          evaluation_groups(id, name, display_name)
-        `,
-          { count: 'exact' }
-        )
-        .neq('comments', '')
+        .select('id, ustaz_id, group_id, feedback_answers, comments, created_at')
         .order('created_at', { ascending: false });
 
-      if (selectedGroup !== 'all') {
-        const grp = groups.find((g) => g.name === selectedGroup);
-        if (grp) query = query.eq('group_id', grp.id);
-      }
-      if (selectedUstazId) query = query.eq('ustaz_id', selectedUstazId);
-      if (search) query = query.ilike('comments', `%${search}%`);
-      if (dateFrom) query = query.gte('created_at', `${dateFrom}T00:00:00Z`);
-      if (dateTo) query = query.lte('created_at', `${dateTo}T23:59:59Z`);
+      if (evalErr) throw evalErr;
 
-      const from = (page - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-      query = query.range(from, to);
+      // Group evaluations by ustaz
+      const compiledReports: UstazFeedbackReport[] = filteredUstazes.map((u: any) => {
+        const matchingEvals = (evalList || []).filter((e) => e.ustaz_id === u.id);
+        const feedbacks: FeedbackItem[] = [];
 
-      const { data, count, error } = await query;
-      if (error) throw error;
+        matchingEvals.forEach((e) => {
+          const fb = (e.feedback_answers || {}) as QualitativeFeedback;
+          const legacy = e.comments?.trim() || '';
 
-      setComments(data || []);
-      setTotalCount(count || 0);
+          const hasStructured =
+            !!fb.ustaz_strengths?.trim() ||
+            !!fb.ustaz_improvements?.trim() ||
+            !!fb.ustaz_additional?.trim() ||
+            !!fb.assistant_name?.trim() ||
+            !!fb.assistant_strengths?.trim() ||
+            !!fb.assistant_improvements?.trim() ||
+            !!fb.assistant_additional?.trim();
 
-      // Initialize grade input map
-      const initialGrades: Record<string, number> = {};
-      data?.forEach((c) => {
-        initialGrades[c.id] = Number(c.comments_score) || 0;
+          if (hasStructured || legacy) {
+            feedbacks.push({
+              evaluation_id: e.id,
+              created_at: e.created_at,
+              feedback: fb,
+              legacy_comments: legacy,
+            });
+          }
+        });
+
+        return {
+          ustaz_id: u.id,
+          ustaz_name: u.name,
+          group_id: u.group_id,
+          group_name: u.evaluation_groups?.name || '',
+          group_display: u.evaluation_groups?.display_name || '',
+          total_evaluations: matchingEvals.length,
+          total_feedback_count: feedbacks.length,
+          feedbacks,
+        };
       });
-      setEditingGrade(initialGrades);
-    } catch (err: any) {
-      console.error('Error loading comments:', err);
+
+      setReports(compiledReports);
+    } catch (err) {
+      console.error('Error loading feedback reports:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveGrade = async (evaluationId: string, currentQuestionsScore: number) => {
-    setSavingGradeId(evaluationId);
-    const scoreVal = Math.min(10, Math.max(0, Number(editingGrade[evaluationId]) || 0));
-    const finalTotal = currentQuestionsScore + scoreVal;
-    const finalPct = Math.round((finalTotal / 100) * 1000) / 10;
-
-    try {
-      const { error } = await supabase
-        .from('evaluations')
-        .update({
-          comments_score: scoreVal,
-          total_score: finalTotal,
-          maximum_score: 100,
-          percentage: finalPct,
-          comments_reviewed_by: user?.id,
-          comments_reviewed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', evaluationId);
-
-      if (error) throw error;
-
-      setComments((prev) =>
-        prev.map((c) =>
-          c.id === evaluationId
-            ? {
-                ...c,
-                comments_score: scoreVal,
-                total_score: finalTotal,
-                percentage: finalPct,
-                comments_reviewed_at: new Date().toISOString(),
-              }
-            : c
-        )
-      );
-    } catch (err) {
-      console.error('Error saving grade:', err);
-    } finally {
-      setSavingGradeId(null);
-    }
+  const toggleSection = (id: string) => {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [id]: prev[id] === undefined ? true : !prev[id],
+    }));
   };
 
-  const handleExport = async () => {
+  const handleExportExcel = async () => {
+    if (reports.length === 0) return;
     setExporting(true);
     try {
-      let query = supabase
-        .from('evaluations')
-        .select(
-          `
-          id,
-          comments,
-          questions_score,
-          comments_score,
-          total_score,
-          maximum_score,
-          percentage,
-          created_at,
-          ustazes(name),
-          evaluation_groups(display_name)
-        `
-        )
-        .neq('comments', '')
-        .order('created_at', { ascending: false });
-
-      if (selectedGroup !== 'all') {
-        const grp = groups.find((g) => g.name === selectedGroup);
-        if (grp) query = query.eq('group_id', grp.id);
-      }
-      if (selectedUstazId) query = query.eq('ustaz_id', selectedUstazId);
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      exportCommentsToExcel(data || [], `student_comments_${selectedGroup}.xlsx`);
+      exportAggregatedFeedbackToExcel(reports, `Ustaz_Feedback_Dossier_${selectedGroup}.xlsx`);
     } catch (err) {
-      console.error('Export error:', err);
+      console.error('Failed to export feedback:', err);
     } finally {
       setExporting(false);
     }
   };
 
+  // Filter reports by selectedUstazId and search term
+  const displayedReports = reports.filter((r) => {
+    if (selectedUstazId !== 'all' && r.ustaz_id !== selectedUstazId) return false;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const matchName = r.ustaz_name.toLowerCase().includes(q);
+      const matchComment = r.feedbacks.some((f) => {
+        const fb = f.feedback || {};
+        return (
+          fb.ustaz_strengths?.toLowerCase().includes(q) ||
+          fb.ustaz_improvements?.toLowerCase().includes(q) ||
+          fb.ustaz_additional?.toLowerCase().includes(q) ||
+          fb.assistant_name?.toLowerCase().includes(q) ||
+          fb.assistant_strengths?.toLowerCase().includes(q) ||
+          fb.assistant_improvements?.toLowerCase().includes(q) ||
+          fb.assistant_additional?.toLowerCase().includes(q) ||
+          f.legacy_comments?.toLowerCase().includes(q)
+        );
+      });
+      return matchName || matchComment;
+    }
+    return true;
+  });
+
+  // Calculate overall stats
+  const totalStudentsEvaluated = reports.reduce((acc, r) => acc + r.total_evaluations, 0);
+  const totalWrittenPapers = reports.reduce((acc, r) => acc + r.total_feedback_count, 0);
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 pb-20">
       <PageHeader
-        title="Student Written Comments Examination"
-        description="Review student handwritten comments. Examine each feedback note and evaluate it out of 10 points to finalize the 100-point total score."
+        title="የኡስታዞች የተማሪዎች አስተያየት ማጠቃለያ"
+        description="Consolidated qualitative feedback collected from students. Grouped per Ustaz across the 7 open questions with zero grading pressure."
         actions={
           <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition font-medium text-sm shadow-sm disabled:opacity-50"
+            type="button"
+            onClick={handleExportExcel}
+            disabled={exporting || reports.length === 0}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-semibold hover:bg-emerald-700 transition shadow-sm disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
-            {exporting ? 'Exporting...' : 'Export Comments Excel'}
+            {exporting ? 'Exporting...' : 'Export Feedback to Excel'}
           </button>
         }
       />
 
-      {/* Filter Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <GroupSelector
-            value={selectedGroup}
-            onChange={(val) => {
-              setSelectedGroup(val as any);
-              setPage(1);
-            }}
-            showAll
-          />
-
-          <div className="relative flex-1 max-w-sm">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search in feedback text (አማርኛ, English)..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              className="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-            />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+            <GraduationCap className="w-6 h-6" />
+          </div>
+          <div>
+            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider block">
+              Total Ustazes
+            </span>
+            <span className="text-xl font-bold text-slate-800">{reports.length} Ustazes</span>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-100">
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">Ustaz</label>
-            <select
-              value={selectedUstazId}
-              onChange={(e) => {
-                setSelectedUstazId(e.target.value);
-                setPage(1);
-              }}
-              className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white"
-            >
-              <option value="">All Ustazes</option>
-              {ustazes.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+            <FileText className="w-6 h-6" />
           </div>
-
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">From Date</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                setPage(1);
-              }}
-              className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg"
-            />
+            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider block">
+              Total Evaluated Papers
+            </span>
+            <span className="text-xl font-bold text-slate-800">{totalStudentsEvaluated} Papers</span>
           </div>
+        </div>
 
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+            <MessageSquare className="w-6 h-6" />
+          </div>
           <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1">To Date</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
-                setPage(1);
-              }}
-              className="w-full px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg"
-            />
+            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider block">
+              Written Feedback Responses
+            </span>
+            <span className="text-xl font-bold text-purple-700">{totalWrittenPapers} Responses</span>
           </div>
         </div>
       </div>
 
-      {/* Comments List */}
+      {/* Filters Bar */}
+      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <GroupSelector
+            value={selectedGroup}
+            onChange={(val) => {
+              setSelectedGroup(val as any);
+              setSelectedUstazId('all');
+            }}
+            showAll
+          />
+
+          {/* Ustaz Dropdown Filter */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 whitespace-nowrap">
+              ኡስታዝ ምረጥ:
+            </label>
+            <select
+              value={selectedUstazId}
+              onChange={(e) => setSelectedUstazId(e.target.value)}
+              className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-slate-700 font-medium"
+            >
+              <option value="all">🌟 All Ustazes ({reports.length})</option>
+              {reports.map((r) => (
+                <option key={r.ustaz_id} value={r.ustaz_id}>
+                  {r.ustaz_name} ({r.group_display}) — {r.total_feedback_count} feedback
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Keyword Search */}
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search within any student comments, strengths, or assistant names (Amharic or English)..."
+            className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            dir="auto"
+          />
+        </div>
+      </div>
+
+      {/* Main Content: Ustaz Feedback Dossiers */}
       {loading ? (
-        <LoadingSpinner text="Searching student comments..." />
-      ) : comments.length === 0 ? (
+        <LoadingSpinner text="Compiling student qualitative feedback dossiers..." />
+      ) : displayedReports.length === 0 ? (
         <EmptyState
           icon={MessageSquare}
-          title="No Written Comments Found"
-          description="No evaluation records with written text match the active filter criteria."
+          title="No Feedback Found"
+          description="No student written comments match your selected filters."
         />
       ) : (
-        <div className="space-y-4">
-          {comments.map((c) => {
-            const qScore = Number(c.questions_score) || Number(c.total_score) || 0;
-            const currentGrade = editingGrade[c.id] ?? Number(c.comments_score) ?? 0;
+        <div className="space-y-6">
+          {displayedReports.map((report) => {
+            // Aggregate all answers for each of the 7 questions
+            const strengths = report.feedbacks
+              .map((f) => f.feedback?.ustaz_strengths?.trim())
+              .filter(Boolean) as string[];
+
+            const improvements = report.feedbacks
+              .map((f) => f.feedback?.ustaz_improvements?.trim())
+              .filter(Boolean) as string[];
+
+            const ustazAdditional = report.feedbacks
+              .map((f) => f.feedback?.ustaz_additional?.trim())
+              .filter(Boolean) as string[];
+
+            const assistantNames = Array.from(
+              new Set(
+                report.feedbacks
+                  .map((f) => f.feedback?.assistant_name?.trim())
+                  .filter(Boolean) as string[]
+              )
+            );
+
+            const assistantStrengths = report.feedbacks
+              .map((f) => f.feedback?.assistant_strengths?.trim())
+              .filter(Boolean) as string[];
+
+            const assistantImprovements = report.feedbacks
+              .map((f) => f.feedback?.assistant_improvements?.trim())
+              .filter(Boolean) as string[];
+
+            const assistantAdditional = report.feedbacks
+              .map((f) => f.feedback?.assistant_additional?.trim())
+              .filter(Boolean) as string[];
+
+            const legacyComments = report.feedbacks
+              .map((f) => f.legacy_comments?.trim())
+              .filter(Boolean) as string[];
+
+            const hasAnyFeedback =
+              strengths.length > 0 ||
+              improvements.length > 0 ||
+              ustazAdditional.length > 0 ||
+              assistantNames.length > 0 ||
+              assistantStrengths.length > 0 ||
+              assistantImprovements.length > 0 ||
+              assistantAdditional.length > 0 ||
+              legacyComments.length > 0;
+
+            const isCollapsed = expandedSections[report.ustaz_id] === false;
 
             return (
               <div
-                key={c.id}
-                className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:border-slate-300 transition space-y-3"
+                key={report.ustaz_id}
+                className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition"
               >
-                {/* Header Row */}
-                <div className="flex items-center justify-between border-b pb-2.5 border-slate-100">
+                {/* Ustaz Card Header */}
+                <div
+                  onClick={() => toggleSection(report.ustaz_id)}
+                  className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200 flex items-center justify-between cursor-pointer hover:bg-slate-50/80 transition"
+                >
                   <div className="flex items-center gap-3">
-                    <span
-                      className={`text-xs px-2.5 py-0.5 rounded font-bold ${
-                        c.evaluation_groups?.name === 'boys'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-pink-100 text-pink-800'
-                      }`}
+                    <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white font-bold text-lg flex items-center justify-center shadow-sm">
+                      {report.ustaz_name.charAt(0)}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-base sm:text-lg font-bold text-slate-900">
+                          {report.ustaz_name}
+                        </h2>
+                        <span
+                          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
+                            report.group_name === 'boys'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-pink-100 text-pink-800'
+                          }`}
+                        >
+                          {report.group_display}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {report.total_evaluations} Total Papers Evaluated &bull;{' '}
+                        <strong className="text-emerald-700">
+                          {report.total_feedback_count} Papers with Written Notes
+                        </strong>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="hidden sm:inline-flex text-xs font-semibold px-3 py-1 rounded-full bg-slate-100 text-slate-700">
+                      {report.total_feedback_count} Comments
+                    </span>
+                    <button
+                      type="button"
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                     >
-                      {c.evaluation_groups?.display_name}
-                    </span>
-                    <span className="font-bold text-slate-900 text-sm">{c.ustazes?.name}</span>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-xs font-semibold">
-                    <span className="text-slate-600 bg-slate-100 px-2.5 py-1 rounded">
-                      Questions: <strong>{qScore}</strong> / 90 pts
-                    </span>
-                    <span className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded">
-                      Final Total: <strong>{c.total_score}</strong> / 100 ({c.percentage}%)
-                    </span>
+                      {isCollapsed ? (
+                        <ChevronDown className="w-5 h-5" />
+                      ) : (
+                        <ChevronUp className="w-5 h-5" />
+                      )}
+                    </button>
                   </div>
                 </div>
 
-                {/* Comment Text */}
-                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
-                  <p className="text-slate-800 text-sm whitespace-pre-wrap leading-relaxed" dir="auto">
-                    "{c.comments}"
-                  </p>
-                </div>
+                {/* Ustaz Feedback Body */}
+                {!isCollapsed && (
+                  <div className="p-4 sm:p-6 space-y-6">
+                    {!hasAnyFeedback ? (
+                      <p className="text-sm text-slate-400 italic text-center py-6">
+                        ለዚህ ኡስታዝ ምንም የተጻፈ አስተያየት አልተገኘም።
+                      </p>
+                    ) : (
+                      <>
+                        {/* Section 1: Main Ustaz Feedback */}
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                            <Sparkles className="w-4 h-4 text-emerald-600" />
+                            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                              በዋናው ኡስታዝ ላይ የተሰጡ አስተያየቶች
+                            </h3>
+                          </div>
 
-                {/* Grading Action Row for Admin */}
-                {isAdmin && (
-                  <div className="flex items-center justify-between pt-1 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Award className="w-4 h-4 text-purple-600" />
-                      <label className="font-bold text-slate-700">
-                        Admin Evaluation (0 to 10 marks):
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="10"
-                        step="0.5"
-                        value={currentGrade}
-                        onChange={(e) =>
-                          setEditingGrade((prev) => ({
-                            ...prev,
-                            [c.id]: parseFloat(e.target.value) || 0,
-                          }))
-                        }
-                        className="w-16 px-2 py-1 text-xs font-bold border border-slate-300 rounded text-center focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white"
-                      />
-                      <span className="text-slate-500 font-medium">/ 10 pts</span>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Question 1: Strengths */}
+                            <div className="p-4 rounded-xl bg-emerald-50/50 border border-emerald-100 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs">
+                                  <ThumbsUp className="w-4 h-4 text-emerald-600" />
+                                  <span>1. ጥሩ ጎኑ (በጣም የምትወዱት)</span>
+                                </div>
+                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                                  {strengths.length} ተማሪዎች
+                                </span>
+                              </div>
+                              {strengths.length === 0 ? (
+                                <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
+                              ) : (
+                                <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-emerald-100/60 max-h-56 overflow-y-auto pr-1">
+                                  {strengths.map((s, idx) => (
+                                    <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                      &bull; &ldquo;{s}&rdquo;
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
 
-                      <button
-                        type="button"
-                        onClick={() => handleSaveGrade(c.id, qScore)}
-                        disabled={savingGradeId === c.id}
-                        className="px-3 py-1 bg-purple-700 text-white rounded text-xs font-bold hover:bg-purple-800 transition disabled:opacity-50 ml-2"
-                      >
-                        {savingGradeId === c.id ? 'Saving...' : 'Set Grade'}
-                      </button>
-                    </div>
+                            {/* Question 2: Improvements / Weaknesses */}
+                            <div className="p-4 rounded-xl bg-amber-50/50 border border-amber-100 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5 text-amber-900 font-bold text-xs">
+                                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                                  <span>2. እንዲያስተካክለው የሚፈለገው (መጥፎ ጎኑ)</span>
+                                </div>
+                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                                  {improvements.length} ተማሪዎች
+                                </span>
+                              </div>
+                              {improvements.length === 0 ? (
+                                <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
+                              ) : (
+                                <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-amber-100/60 max-h-56 overflow-y-auto pr-1">
+                                  {improvements.map((imp, idx) => (
+                                    <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                      &bull; &ldquo;{imp}&rdquo;
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </div>
 
-                    <div className="text-slate-400">
-                      Submitted: {new Date(c.created_at).toLocaleDateString()}
-                    </div>
+                          {/* Question 3: Additional Comments */}
+                          {ustazAdditional.length > 0 && (
+                            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                              <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                                <div className="flex items-center gap-1.5">
+                                  <MessageCircle className="w-4 h-4 text-slate-500" />
+                                  <span>3. ተጨማሪ አስተያየት</span>
+                                </div>
+                                <span className="text-[11px] font-semibold text-slate-500">
+                                  {ustazAdditional.length} ተማሪዎች
+                                </span>
+                              </div>
+                              <ul className="space-y-1.5 text-xs text-slate-700 divide-y divide-slate-200 max-h-48 overflow-y-auto pr-1">
+                                {ustazAdditional.map((add, idx) => (
+                                  <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                    &bull; &ldquo;{add}&rdquo;
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Section 2: Assistant Ustaz Feedback */}
+                        {(assistantNames.length > 0 ||
+                          assistantStrengths.length > 0 ||
+                          assistantImprovements.length > 0 ||
+                          assistantAdditional.length > 0) && (
+                          <div className="space-y-4 pt-2 border-t border-slate-100">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                              <div className="flex items-center gap-2">
+                                <UserCheck className="w-4 h-4 text-blue-600" />
+                                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                                  በአጋዥ ኡስታዝ/ኡስታዟ ላይ የተሰጡ አስተያየቶች
+                                </h3>
+                              </div>
+                              {assistantNames.length > 0 && (
+                                <div className="flex items-center gap-1 text-xs text-slate-600">
+                                  <span className="font-semibold text-slate-400">የአጋዥ ስም:</span>
+                                  {assistantNames.map((name, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-bold"
+                                    >
+                                      {name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* Assistant Strengths */}
+                              <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-100 space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs">
+                                    <ThumbsUp className="w-4 h-4 text-blue-600" />
+                                    <span>5. የአጋዥ ኡስታዙ ጥሩ ጎን</span>
+                                  </div>
+                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-900">
+                                    {assistantStrengths.length} ተማሪዎች
+                                  </span>
+                                </div>
+                                {assistantStrengths.length === 0 ? (
+                                  <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
+                                ) : (
+                                  <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-blue-100/60 max-h-56 overflow-y-auto pr-1">
+                                    {assistantStrengths.map((as, idx) => (
+                                      <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                        &bull; &ldquo;{as}&rdquo;
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+
+                              {/* Assistant Improvements */}
+                              <div className="p-4 rounded-xl bg-orange-50/50 border border-orange-100 space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5 text-orange-900 font-bold text-xs">
+                                    <AlertTriangle className="w-4 h-4 text-orange-600" />
+                                    <span>6. በአጋዥ ኡስታዙ መሻሻል ያለበት</span>
+                                  </div>
+                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-900">
+                                    {assistantImprovements.length} ተማሪዎች
+                                  </span>
+                                </div>
+                                {assistantImprovements.length === 0 ? (
+                                  <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
+                                ) : (
+                                  <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-orange-100/60 max-h-56 overflow-y-auto pr-1">
+                                    {assistantImprovements.map((ai, idx) => (
+                                      <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                        &bull; &ldquo;{ai}&rdquo;
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Assistant Additional */}
+                            {assistantAdditional.length > 0 && (
+                              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                                  <div className="flex items-center gap-1.5">
+                                    <MessageCircle className="w-4 h-4 text-slate-500" />
+                                    <span>7. በአጋዥ ኡስታዙ ተጨማሪ አስተያየት</span>
+                                  </div>
+                                  <span className="text-[11px] font-semibold text-slate-500">
+                                    {assistantAdditional.length} ተማሪዎች
+                                  </span>
+                                </div>
+                                <ul className="space-y-1.5 text-xs text-slate-700 divide-y divide-slate-200 max-h-48 overflow-y-auto pr-1">
+                                  {assistantAdditional.map((aa, idx) => (
+                                    <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
+                                      &bull; &ldquo;{aa}&rdquo;
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Legacy comments if any */}
+                        {legacyComments.length > 0 && (
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                            <span className="font-bold text-slate-600 block">
+                              የቀደሙ አጠቃላይ አስተያየቶች ({legacyComments.length})
+                            </span>
+                            <ul className="space-y-1 text-slate-600 max-h-40 overflow-y-auto">
+                              {legacyComments.map((c, i) => (
+                                <li key={i} dir="auto">
+                                  &bull; {c}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
             );
           })}
-
-          <Pagination
-            page={page}
-            pageSize={PAGE_SIZE}
-            total={totalCount}
-            onPageChange={(p) => setPage(p)}
-          />
         </div>
       )}
     </div>

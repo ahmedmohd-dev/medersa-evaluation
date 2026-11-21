@@ -54,17 +54,28 @@ export interface EvaluationQuestion {
   updated_at: string;
 }
 
+export interface QualitativeFeedback {
+  ustaz_strengths?: string;          // በኡስታዙ ትምህርት አሰጣጥ ላይ በጣም የምትወዱት (ጥሩ ጎኑ) ምንድን ነው?
+  ustaz_improvements?: string;       // ኡስታዙ እንዲያስተካክለው ወይም እንዲያሻሽለው የምትፈልጉት ነገር (መጥፎ ጎኑ) ምንድን ነው?
+  ustaz_additional?: string;         // ተጨማሪ አስተያየት ካላችሁ፡
+  assistant_name?: string;           // የአጋዥ ኡስታዙ/የኡስታዟ ስም፡
+  assistant_strengths?: string;      // በአጋዥ ኡስታዙ ላይ የሚታዩ ጥሩ ነገሮች (ጥሩ ጎኑ) ምንድን ነው?
+  assistant_improvements?: string;   // በአጋዥ ኡስታዙ ላይ የሚታዩ መጥፎ ነገሮች (መጥፎ ጎኑ) ምንድን ነው?
+  assistant_additional?: string;     // በአጋዥ ኡስታዙ ተጨማሪ አስተያየት ካላችሁ፡
+}
+
 export interface Evaluation {
   id: string;
   group_id: string;
   ustaz_id: string;
   template_id: string | null;
   questions_score: number; // out of 90
-  comments_score: number;  // out of 10 (examined by admin)
-  total_score: number;     // out of 100 (questions_score + comments_score)
-  maximum_score: number;   // 100
+  comments_score?: number; // legacy 0
+  total_score: number;     // out of 90 (purely based on multiple choice questions)
+  maximum_score: number;   // 90
   percentage: number;
   comments: string;
+  feedback_answers?: QualitativeFeedback;
   comments_reviewed_by?: string | null;
   comments_reviewed_at?: string | null;
   entered_by: string;

@@ -6,11 +6,16 @@ interface RawExportRow {
   'Group': string;
   'Ustaz Name': string;
   [key: string]: any; // Dynamic question columns (answers: ሀ, ለ, ሐ, መ)
-  'Questions Score (/90)': number;
-  'Comments Score (/10)': number;
-  'Total Score (/100)': number;
+  'Total Score (/90)': number;
   'Percentage (%)': number;
-  'Comments / Suggestions': string;
+  'በኡስታዙ ጥሩ ጎኑ': string;
+  'በኡስታዙ መሻሻል ያለበት': string;
+  'በኡስታዙ ተጨማሪ አስተያየት': string;
+  'የአጋዥ ኡስታዝ ስም': string;
+  'በአጋዥ ኡስታዙ ጥሩ ጎኑ': string;
+  'በአጋዥ ኡስታዙ መሻሻል ያለበት': string;
+  'በአጋዥ ኡስታዙ ተጨማሪ አስተያየት': string;
+  'All Feedback Combined': string;
   'Entered By': string;
   'Date': string;
 }
@@ -40,19 +45,23 @@ export function exportEvaluationsToExcel(
   });
 
   const rows: RawExportRow[] = evaluations.map((ev) => {
-    const qScore = Number(ev.questions_score) || Number(ev.total_score) || 0;
-    const cScore = Number(ev.comments_score) || 0;
-    const totScore = Number(ev.total_score) || 0;
+    const totScore = Number(ev.total_score) || Number(ev.questions_score) || 0;
+    const fb = ev.feedback_answers || {};
 
     const row: RawExportRow = {
       'Evaluation ID': ev.id,
       'Group': ev.group?.display_name || ev.group?.name || (ev.evaluation_groups?.display_name || 'N/A'),
       'Ustaz Name': ev.ustaz?.name || ev.ustazes?.name || 'N/A',
-      'Questions Score (/90)': qScore,
-      'Comments Score (/10)': cScore,
-      'Total Score (/100)': totScore,
-      'Percentage (%)': Number(ev.percentage) || totScore,
-      'Comments / Suggestions': ev.comments || '',
+      'Total Score (/90)': totScore,
+      'Percentage (%)': Number(ev.percentage) || Math.round((totScore / 90) * 1000) / 10,
+      'በኡስታዙ ጥሩ ጎኑ': fb.ustaz_strengths || '',
+      'በኡስታዙ መሻሻል ያለበት': fb.ustaz_improvements || '',
+      'በኡስታዙ ተጨማሪ አስተያየት': fb.ustaz_additional || '',
+      'የአጋዥ ኡስታዝ ስም': fb.assistant_name || '',
+      'በአጋዥ ኡስታዙ ጥሩ ጎኑ': fb.assistant_strengths || '',
+      'በአጋዥ ኡስታዙ መሻሻል ያለበት': fb.assistant_improvements || '',
+      'በአጋዥ ኡስታዙ ተጨማሪ አስተያየት': fb.assistant_additional || '',
+      'All Feedback Combined': ev.comments || '',
       'Entered By': ev.entered_by_profile?.full_name || ev.profiles?.full_name || 'N/A',
       'Date': new Date(ev.created_at).toLocaleString(),
     };
@@ -78,11 +87,16 @@ export function exportEvaluationsToExcel(
     { wch: 10 }, // Group
     { wch: 22 }, // Ustaz
     ...Array.from({ length: questionMap.size }).map(() => ({ wch: 28 })),
-    { wch: 22 }, // Qs /90
-    { wch: 20 }, // Comments /10
-    { wch: 18 }, // Total /100
+    { wch: 18 }, // Total /90
     { wch: 14 }, // %
-    { wch: 40 }, // Comments
+    { wch: 35 }, // Strengths
+    { wch: 35 }, // Improvements
+    { wch: 30 }, // Additional
+    { wch: 22 }, // Assistant Name
+    { wch: 35 }, // Assistant Strengths
+    { wch: 35 }, // Assistant Improvements
+    { wch: 30 }, // Assistant Additional
+    { wch: 45 }, // Combined
     { wch: 20 }, // User
     { wch: 22 }, // Date
   ];
@@ -102,10 +116,10 @@ export function exportUstazSummaryToExcel(
   const rows = stats.map((s) => ({
     'Ustaz Name': s.ustaz_name,
     'Total Evaluations': s.evaluation_count,
-    'Average Score': s.average_score,
+    'Average Score (/90)': s.average_score,
     'Average Percentage (%)': s.average_percentage,
-    'Highest Score': s.highest_score,
-    'Lowest Score': s.lowest_score,
+    'Highest Score (/90)': s.highest_score,
+    'Lowest Score (/90)': s.lowest_score,
   }));
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
@@ -136,27 +150,84 @@ export function exportQuestionSummaryToExcel(
 }
 
 /**
- * Export Comments only
+ * Export Aggregated Ustaz Qualitative Feedback (Dossier per Ustaz)
  */
-export function exportCommentsToExcel(
-  evaluations: any[],
-  filename: string = 'comments_export.xlsx'
+export function exportAggregatedFeedbackToExcel(
+  ustazReports: Array<{
+    ustaz_name: string;
+    group_name: string;
+    total_evaluations: number;
+    feedbacks: any[];
+  }>,
+  filename: string = 'ustaz_qualitative_feedback_dossier.xlsx'
 ) {
-  const rows = evaluations
-    .filter((e) => e.comments && e.comments.trim().length > 0)
-    .map((e) => ({
-      'Ustaz Name': e.ustaz?.name || e.ustazes?.name || 'N/A',
-      'Group': e.group?.display_name || e.evaluation_groups?.display_name || 'N/A',
-      'Questions Score (/90)': Number(e.questions_score) || Number(e.total_score) || 0,
-      'Comments Score (/10)': Number(e.comments_score) || 0,
-      'Total Score (/100)': Number(e.total_score) || 0,
-      'Percentage (%)': e.percentage,
-      'Comments / Suggestions': e.comments,
-      'Date': new Date(e.created_at).toLocaleString(),
-    }));
-
-  const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Comments');
+
+  // Sheet 1: All Feedback Flat Table
+  const flatRows: any[] = [];
+  ustazReports.forEach((u) => {
+    u.feedbacks.forEach((fbItem, idx) => {
+      const fb = fbItem.feedback || {};
+      flatRows.push({
+        'Ustaz Name': u.ustaz_name,
+        'Group': u.group_name,
+        'Paper #': idx + 1,
+        '1. የኡስታዙ ጥሩ ጎን': fb.ustaz_strengths || '',
+        '2. የኡስታዙ መሻሻል ያለበት': fb.ustaz_improvements || '',
+        '3. ተጨማሪ አስተያየት': fb.ustaz_additional || '',
+        '4. የአጋዥ ኡስታዝ ስም': fb.assistant_name || '',
+        '5. የአጋዥ ጥሩ ጎን': fb.assistant_strengths || '',
+        '6. የአጋዥ መሻሻል ያለበት': fb.assistant_improvements || '',
+        '7. ለአጋዥ ተጨማሪ አስተያየት': fb.assistant_additional || '',
+        'Legacy Comments': fbItem.legacy_comments || '',
+        'Submission Date': fbItem.created_at ? new Date(fbItem.created_at).toLocaleDateString() : '',
+      });
+    });
+  });
+
+  const sheet1 = XLSX.utils.json_to_sheet(flatRows);
+  sheet1['!cols'] = [
+    { wch: 22 },
+    { wch: 12 },
+    { wch: 8 },
+    { wch: 35 },
+    { wch: 35 },
+    { wch: 30 },
+    { wch: 20 },
+    { wch: 35 },
+    { wch: 35 },
+    { wch: 30 },
+    { wch: 35 },
+    { wch: 15 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, sheet1, 'All Feedback by Ustaz');
+
+  // Sheet 2: Summary of Feedback Counts
+  const summaryRows = ustazReports.map((u) => {
+    let strengthsCount = 0;
+    let improvementsCount = 0;
+    let assistantCount = 0;
+
+    u.feedbacks.forEach((f) => {
+      const fb = f.feedback || {};
+      if (fb.ustaz_strengths?.trim()) strengthsCount++;
+      if (fb.ustaz_improvements?.trim()) improvementsCount++;
+      if (fb.assistant_name?.trim() || fb.assistant_strengths?.trim() || fb.assistant_improvements?.trim()) assistantCount++;
+    });
+
+    return {
+      'Ustaz Name': u.ustaz_name,
+      'Group': u.group_name,
+      'Total Papers': u.total_evaluations,
+      'Papers with Feedback': u.feedbacks.length,
+      'Strengths Mentioned': strengthsCount,
+      'Improvements Suggested': improvementsCount,
+      'Assistant Feedback Received': assistantCount,
+    };
+  });
+
+  const sheet2 = XLSX.utils.json_to_sheet(summaryRows);
+  XLSX.utils.book_append_sheet(workbook, sheet2, 'Ustaz Feedback Counts');
+
   XLSX.writeFile(workbook, filename);
 }

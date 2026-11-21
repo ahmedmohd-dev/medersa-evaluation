@@ -53,10 +53,6 @@ export function EvaluationsPage() {
   const [viewAnswers, setViewAnswers] = useState<EvaluationAnswer[]>([]);
   const [loadingAnswers, setLoadingAnswers] = useState(false);
 
-  // Admin Comments Grading inside View Modal
-  const [adminCommentScore, setAdminCommentScore] = useState<number>(0);
-  const [savingCommentGrade, setSavingCommentGrade] = useState(false);
-
   // Delete Confirmation
   const [deleteEval, setDeleteEval] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -130,7 +126,6 @@ export function EvaluationsPage() {
 
   const handleOpenView = async (ev: any) => {
     setViewEval(ev);
-    setAdminCommentScore(Number(ev.comments_score) || 0);
     setLoadingAnswers(true);
     try {
       const { data, error } = await supabase
@@ -144,59 +139,6 @@ export function EvaluationsPage() {
       showToast('error', 'Failed to load evaluation answers');
     } finally {
       setLoadingAnswers(false);
-    }
-  };
-
-  // Grade comments out of 10 points
-  const handleSaveCommentGrade = async () => {
-    if (!viewEval) return;
-    setSavingCommentGrade(true);
-
-    const safeGrade = Math.min(10, Math.max(0, Number(adminCommentScore) || 0));
-    const questionsScore = Number(viewEval.questions_score) || Number(viewEval.total_score) || 0;
-    const finalTotal = questionsScore + safeGrade;
-    const finalPct = Math.round((finalTotal / 100) * 1000) / 10;
-
-    try {
-      const { error } = await supabase
-        .from('evaluations')
-        .update({
-          comments_score: safeGrade,
-          total_score: finalTotal,
-          maximum_score: 100,
-          percentage: finalPct,
-          comments_reviewed_by: user?.id,
-          comments_reviewed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', viewEval.id);
-
-      if (error) throw error;
-
-      await supabase.from('audit_logs').insert({
-        user_id: user?.id,
-        action: 'evaluation_updated',
-        entity_type: 'evaluation',
-        entity_id: viewEval.id,
-        old_values: { comments_score: viewEval.comments_score, total_score: viewEval.total_score },
-        new_values: { comments_score: safeGrade, total_score: finalTotal },
-      });
-
-      showToast('success', `Comments evaluated: ${safeGrade}/10. Total score updated to ${finalTotal}/100`);
-
-      // Update in local state
-      setViewEval((prev: any) => ({
-        ...prev,
-        comments_score: safeGrade,
-        total_score: finalTotal,
-        percentage: finalPct,
-      }));
-
-      loadEvaluations();
-    } catch (err: any) {
-      showToast('error', err.message || 'Failed to update comments score');
-    } finally {
-      setSavingCommentGrade(false);
     }
   };
 
@@ -401,9 +343,8 @@ export function EvaluationsPage() {
                 <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   <th className="py-3.5 px-4">Group</th>
                   <th className="py-3.5 px-4">Ustaz Evaluated</th>
-                  <th className="py-3.5 px-4 text-center">Questions (/90)</th>
-                  <th className="py-3.5 px-4 text-center">Comments (/10)</th>
-                  <th className="py-3.5 px-4 text-center">Total (/100)</th>
+                  <th className="py-3.5 px-4 text-center">Score (/90)</th>
+                  <th className="py-3.5 px-4 text-center">Percentage</th>
                   <th className="py-3.5 px-4">Student Comments</th>
                   <th className="py-3.5 px-4">Entered By</th>
                   <th className="py-3.5 px-4 text-right">Actions</th>
@@ -411,8 +352,6 @@ export function EvaluationsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {displayedEvals.map((ev) => {
-                  const qScore = Number(ev.questions_score) || Number(ev.total_score) || 0;
-                  const cScore = Number(ev.comments_score) || 0;
                   const totScore = Number(ev.total_score) || 0;
 
                   return (
@@ -433,38 +372,23 @@ export function EvaluationsPage() {
                         {ev.ustazes?.name || 'Unknown Ustaz'}
                       </td>
 
-                      {/* Questions Score /90 */}
-                      <td className="py-3 px-4 text-center font-bold text-slate-700">
-                        {qScore} <span className="text-xs text-slate-400 font-normal">/ 90</span>
+                      {/* Score /90 */}
+                      <td className="py-3 px-4 text-center font-bold text-slate-800">
+                        {totScore} <span className="text-xs text-slate-400 font-normal">/ 90</span>
                       </td>
 
-                      {/* Comments Score /10 */}
-                      <td className="py-3 px-4 text-center">
-                        {cScore > 0 ? (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800">
-                            +{cScore} / 10
-                          </span>
-                        ) : ev.comments ? (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                            Ungraded
-                          </span>
-                        ) : (
-                          <span className="text-xs text-slate-300">0 / 10</span>
-                        )}
-                      </td>
-
-                      {/* Total Score /100 */}
+                      {/* Percentage */}
                       <td className="py-3 px-4 text-center">
                         <span
                           className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                            totScore >= 75
+                            ev.percentage >= 75
                               ? 'bg-emerald-100 text-emerald-800'
-                              : totScore >= 50
+                              : ev.percentage >= 50
                               ? 'bg-amber-100 text-amber-800'
                               : 'bg-red-100 text-red-800'
                           }`}
                         >
-                          {totScore}%
+                          {ev.percentage}%
                         </span>
                       </td>
 
@@ -517,11 +441,11 @@ export function EvaluationsPage() {
         </div>
       )}
 
-      {/* Examine Paper & Grade Comments Modal */}
+      {/* Examine Paper Modal */}
       <Modal
         isOpen={!!viewEval}
         onClose={() => setViewEval(null)}
-        title="Student Paper Examination & Comments Grading"
+        title="Student Paper Examination"
         size="lg"
       >
         {viewEval && (
@@ -535,80 +459,83 @@ export function EvaluationsPage() {
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block font-semibold">Questions Score</span>
+                <span className="text-slate-400 block font-semibold">Group</span>
                 <span className="font-bold text-slate-800 text-sm">
-                  {viewEval.questions_score || viewEval.total_score} / 90 pts
+                  {viewEval.evaluation_groups?.display_name || 'N/A'}
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block font-semibold">Comments Mark</span>
-                <span className="font-bold text-purple-700 text-sm">
-                  {viewEval.comments_score || 0} / 10 pts
+                <span className="text-slate-400 block font-semibold">Total Score</span>
+                <span className="font-bold text-slate-900 text-base">
+                  {viewEval.total_score} / 90 pts
                 </span>
               </div>
               <div>
-                <span className="text-slate-400 block font-semibold">Total Final Grade</span>
+                <span className="text-slate-400 block font-semibold">Percentage</span>
                 <span className="font-bold text-emerald-600 text-base">
-                  {viewEval.total_score} / 100 ({viewEval.percentage}%)
+                  {viewEval.percentage}%
                 </span>
               </div>
             </div>
 
-            {/* Admin Comments Evaluation Box (CRITICAL REQUIREMENT) */}
-            <div className="p-4 bg-purple-50/70 rounded-xl border border-purple-200 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Award className="w-4 h-4 text-purple-700" /> Admin Comment Grading (out of 10)
-                </h4>
-                {viewEval.comments_reviewed_at && (
-                  <span className="text-[11px] text-purple-700">
-                    Graded on {new Date(viewEval.comments_reviewed_at).toLocaleDateString()}
-                  </span>
-                )}
-              </div>
+            {/* 7 Qualitative Feedback Questions */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-emerald-600" /> የተማሪዎች ክፍት አስተያየቶች (7 Qualitative Feedback Questions)
+              </h4>
 
-              <div>
-                <span className="text-xs font-semibold text-slate-500 block mb-1">
-                  Student's Written Feedback:
-                </span>
-                {viewEval.comments ? (
-                  <p className="p-3 bg-white rounded-lg border border-purple-200 text-sm text-slate-800 leading-relaxed" dir="auto">
-                    "{viewEval.comments}"
-                  </p>
-                ) : (
-                  <p className="p-3 bg-white/50 rounded-lg border border-purple-100 text-xs text-slate-400 italic">
-                    Student did not write any comments on this paper form.
-                  </p>
-                )}
-              </div>
-
-              {isAdmin && (
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs font-bold text-purple-900">
-                      Assign Mark (0 to 10):
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="10"
-                      step="0.5"
-                      value={adminCommentScore}
-                      onChange={(e) => setAdminCommentScore(parseFloat(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 text-sm font-bold border border-purple-300 rounded-lg bg-white text-center focus:outline-none focus:ring-2 focus:ring-purple-400"
-                    />
-                    <span className="text-xs text-purple-700 font-semibold">/ 10 pts</span>
+              {viewEval.feedback_answers ? (
+                <div className="space-y-3 text-xs">
+                  {/* Main Ustaz Section */}
+                  <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5">
+                    <span className="font-bold text-emerald-800 uppercase block text-[11px] pb-1 border-b border-slate-100">
+                      ክፍል 1 — ዋና ኡስታዝ
+                    </span>
+                    <div>
+                      <p className="text-slate-500 font-medium">1. በኡስታዙ ትምህርት አሰጣጥ ላይ በጣም የምትወዱት (ጥሩ ጎኑ) ምንድን ነው?</p>
+                      <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.main_strengths || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-medium">2. ኡስታዙ እንዲያስተካክለው ወይም እንዲያሻሽለው የምትፈልጉት ነገር (መጥፎ ጎኑ) ምንድን ነው?</p>
+                      <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.main_improvements || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-medium">3. ተጨማሪ አስተያየት ካላችሁ፡</p>
+                      <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.main_additional || '—'}</p>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={handleSaveCommentGrade}
-                    disabled={savingCommentGrade}
-                    className="px-4 py-1.5 bg-purple-700 text-white rounded-lg text-xs font-bold hover:bg-purple-800 transition disabled:opacity-50"
-                  >
-                    {savingCommentGrade ? 'Saving Grade...' : 'Save Comment Grade'}
-                  </button>
+                  {/* Assistant Ustaz Section */}
+                  <div className="bg-white p-3.5 rounded-lg border border-slate-200 space-y-2.5">
+                    <span className="font-bold text-blue-800 uppercase block text-[11px] pb-1 border-b border-slate-100">
+                      ክፍል 2 — አጋዥ ኡስታዝ
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <p className="text-slate-500 font-medium">4. የአጋዥ ኡስታዙ/የኡስታዟ ስም፡</p>
+                        <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.assistant_name || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 font-medium">5. በአጋዥ ኡስታዙ ላይ የሚታዩ ጥሩ ነገሮች (ጥሩ ጎኑ)፡</p>
+                        <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.assistant_strengths || '—'}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-medium">6. በአጋዥ ኡስታዙ ላይ የሚታዩ መጥፎ ነገሮች (መጥፎ ጎኑ)፡</p>
+                      <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.assistant_weaknesses || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500 font-medium">7. በአጋዥ ኡስታዙ ተጨማሪ አስተያየት ካላችሁ፡</p>
+                      <p className="text-slate-800 font-semibold mt-0.5" dir="auto">{viewEval.feedback_answers.assistant_additional || '—'}</p>
+                    </div>
+                  </div>
                 </div>
+              ) : viewEval.comments ? (
+                <div className="bg-white p-3 rounded-lg border border-slate-200">
+                  <p className="text-slate-800 text-sm leading-relaxed" dir="auto">"{viewEval.comments}"</p>
+                </div>
+              ) : (
+                <p className="text-slate-400 text-xs italic">ምንም ክፍት አስተያየት አልተሰጠም።</p>
               )}
             </div>
 

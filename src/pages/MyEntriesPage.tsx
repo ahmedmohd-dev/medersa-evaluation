@@ -143,9 +143,8 @@ export function MyEntriesPage() {
       editAnswers.forEach((a) => {
         questionsScore += Number(a.marks_awarded) || 0;
       });
-      const commentsScore = Number(editingEval.comments_score) || 0;
-      const total = questionsScore + commentsScore;
-      const max = 100;
+      const total = questionsScore;
+      const max = 90;
       const pct = Math.round((total / max) * 10000) / 100;
 
       for (const ans of editAnswers) {
@@ -164,7 +163,7 @@ export function MyEntriesPage() {
         .from('evaluations')
         .update({
           questions_score: questionsScore,
-          comments_score: commentsScore,
+          comments_score: 0,
           total_score: total,
           maximum_score: max,
           percentage: pct,
@@ -237,9 +236,8 @@ export function MyEntriesPage() {
                   <th className="py-3.5 px-4">Ustaz Evaluated</th>
                   {isAdmin ? (
                     <>
-                      <th className="py-3.5 px-4 text-center">Questions (/90)</th>
-                      <th className="py-3.5 px-4 text-center">Admin (/10)</th>
-                      <th className="py-3.5 px-4 text-center">Total (/100)</th>
+                      <th className="py-3.5 px-4 text-center">Score (/90)</th>
+                      <th className="py-3.5 px-4 text-center">Percentage</th>
                     </>
                   ) : (
                     <th className="py-3.5 px-4 text-center">Status</th>
@@ -268,29 +266,20 @@ export function MyEntriesPage() {
                     </td>
                     {isAdmin ? (
                       <>
-                        <td className="py-3 px-4 text-center font-semibold text-slate-700">
-                          {ev.questions_score ?? ev.total_score}
-                        </td>
-                        <td className="py-3 px-4 text-center text-xs">
-                          {ev.comments_score !== null && ev.comments_score !== undefined ? (
-                            <span className="font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                              +{ev.comments_score}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 italic">Pending</span>
-                          )}
+                        <td className="py-3 px-4 text-center font-bold text-slate-800">
+                          {ev.total_score} <span className="text-xs text-slate-400 font-normal">/ 90</span>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span
                             className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                              ev.total_score >= 75
+                              ev.percentage >= 75
                                 ? 'bg-emerald-100 text-emerald-800'
-                                : ev.total_score >= 50
+                                : ev.percentage >= 50
                                 ? 'bg-amber-100 text-amber-800'
                                 : 'bg-red-100 text-red-800'
                             }`}
                           >
-                            {ev.total_score} / 100 ({ev.percentage}%)
+                            {ev.percentage}%
                           </span>
                         </td>
                       </>
@@ -354,16 +343,11 @@ export function MyEntriesPage() {
               </div>
               {isAdmin ? (
                 <div className="text-right">
-                  <div className="font-bold text-emerald-700">
-                    Questions: {viewEval.questions_score ?? viewEval.total_score} / 90
-                    {viewEval.comments_score !== null && viewEval.comments_score !== undefined && (
-                      <span className="text-xs text-slate-600 ml-2">
-                        + Comments: {viewEval.comments_score} / 10
-                      </span>
-                    )}
+                  <div className="font-bold text-slate-800">
+                    Score: {viewEval.total_score} / 90
                   </div>
-                  <div className="text-xs font-semibold text-slate-500">
-                    Total: {viewEval.total_score} / 100 ({viewEval.percentage}%)
+                  <div className="text-xs font-semibold text-emerald-700">
+                    {viewEval.percentage}%
                   </div>
                 </div>
               ) : (

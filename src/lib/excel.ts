@@ -231,3 +231,90 @@ export function exportAggregatedFeedbackToExcel(
 
   XLSX.writeFile(workbook, filename);
 }
+
+/**
+ * Export Dedicated Assistant Ustaz Feedback to Excel
+ */
+export function exportAssistantFeedbackToExcel(
+  assistantReports: Array<{
+    assistant_name: string;
+    group_name: string;
+    main_ustazes: string[];
+    feedbacks: Array<{
+      main_ustaz_name: string;
+      group_name: string;
+      strengths?: string;
+      improvements?: string;
+      additional?: string;
+      created_at?: string;
+    }>;
+  }>,
+  filename: string = 'assistant_ustaz_feedback.xlsx'
+) {
+  const workbook = XLSX.utils.book_new();
+
+  // Sheet 1: Flat Feedback Rows
+  const flatRows: any[] = [];
+  assistantReports.forEach((a) => {
+    a.feedbacks.forEach((fb, idx) => {
+      flatRows.push({
+        'Assistant Ustaz': a.assistant_name,
+        'Main Ustaz (Class)': fb.main_ustaz_name,
+        'Section / Group': fb.group_name,
+        'Paper #': idx + 1,
+        'የአጋዥ ጥሩ ጎን (Strengths)': fb.strengths || '',
+        'የአጋዥ መሻሻል ያለበት (Improvements)': fb.improvements || '',
+        'ተጨማሪ አስተያየት (Additional)': fb.additional || '',
+        'Date': fb.created_at ? new Date(fb.created_at).toLocaleDateString() : '',
+      });
+    });
+  });
+
+  const sheet1 = XLSX.utils.json_to_sheet(flatRows);
+  sheet1['!cols'] = [
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 15 },
+    { wch: 8 },
+    { wch: 40 },
+    { wch: 40 },
+    { wch: 35 },
+    { wch: 15 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, sheet1, 'Assistant Feedback Details');
+
+  // Sheet 2: Summary by Assistant
+  const summaryRows = assistantReports.map((a) => {
+    let strengthsCount = 0;
+    let improvementsCount = 0;
+    let additionalCount = 0;
+
+    a.feedbacks.forEach((f) => {
+      if (f.strengths?.trim()) strengthsCount++;
+      if (f.improvements?.trim()) improvementsCount++;
+      if (f.additional?.trim()) additionalCount++;
+    });
+
+    return {
+      'Assistant Ustaz': a.assistant_name,
+      'Total Student Comments': a.feedbacks.length,
+      'Strengths Mentioned': strengthsCount,
+      'Improvements Suggested': improvementsCount,
+      'Additional Comments': additionalCount,
+      'Main Ustazes Assisted': a.main_ustazes.join(', '),
+    };
+  });
+
+  const sheet2 = XLSX.utils.json_to_sheet(summaryRows);
+  sheet2['!cols'] = [
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 20 },
+    { wch: 22 },
+    { wch: 20 },
+    { wch: 40 },
+  ];
+  XLSX.utils.book_append_sheet(workbook, sheet2, 'Assistant Summary');
+
+  XLSX.writeFile(workbook, filename);
+}

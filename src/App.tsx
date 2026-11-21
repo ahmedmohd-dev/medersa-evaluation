@@ -12,6 +12,7 @@ import {
   QuestionsPage,
   EvaluationsPage,
   CommentsPage,
+  AssistantCommentsPage,
   UsersPage,
   AuditLogsPage,
   SettingsPage,
@@ -108,6 +109,14 @@ export function App() {
                 element={
                   <ProtectedRoute requireAdmin>
                     <CommentsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/assistant-comments"
+                element={
+                  <ProtectedRoute requireAdmin>
+                    <AssistantCommentsPage />
                   </ProtectedRoute>
                 }
               />

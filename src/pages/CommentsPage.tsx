@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { EvaluationGroup, Ustaz, QualitativeFeedback } from '../types';
@@ -184,8 +185,8 @@ export function CommentsPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-20">
       <PageHeader
-        title="የኡስታዞች የተማሪዎች አስተያየት ማጠቃለያ"
-        description="Consolidated qualitative feedback collected from students. Grouped per Ustaz across the 7 open questions with zero grading pressure."
+        title="የኡስታዞች የተማሪዎች አስተያየት ማጠቃለያ (Main Ustazes)"
+        description="Consolidated qualitative feedback collected from students for Main Ustazes. Grouped per Ustaz with zero grading pressure."
         actions={
           <button
             type="button"
@@ -198,6 +199,24 @@ export function CommentsPage() {
           </button>
         }
       />
+
+      {/* Top Tab Switcher: Main Ustaz vs Assistant Ustaz */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+        <div className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white shadow-sm">
+          <MessageSquare className="w-4 h-4 text-white" />
+          <span>ዋና ኡስታዞች (Main Ustaz Comments)</span>
+          <span className="ml-1 px-2 py-0.5 rounded-full bg-white/20 text-xs text-white">
+            {reports.length}
+          </span>
+        </div>
+        <Link
+          to="/assistant-comments"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+        >
+          <UserCheck className="w-4 h-4 text-blue-600" />
+          <span>አጋዥ ኡስታዞች (Assistant Ustaz Comments)</span>
+        </Link>
+      </div>
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -491,105 +510,21 @@ export function CommentsPage() {
                           )}
                         </div>
 
-                        {/* Section 2: Assistant Ustaz Feedback */}
-                        {(assistantNames.length > 0 ||
-                          assistantStrengths.length > 0 ||
-                          assistantImprovements.length > 0 ||
-                          assistantAdditional.length > 0) && (
-                          <div className="space-y-4 pt-2 border-t border-slate-100">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                              <div className="flex items-center gap-2">
-                                <UserCheck className="w-4 h-4 text-blue-600" />
-                                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
-                                  በአጋዥ ኡስታዝ/ኡስታዟ ላይ የተሰጡ አስተያየቶች
-                                </h3>
-                              </div>
-                              {assistantNames.length > 0 && (
-                                <div className="flex items-center gap-1 text-xs text-slate-600">
-                                  <span className="font-semibold text-slate-400">የአጋዥ ስም:</span>
-                                  {assistantNames.map((name, idx) => (
-                                    <span
-                                      key={idx}
-                                      className="px-2 py-0.5 rounded bg-blue-50 text-blue-800 font-bold"
-                                    >
-                                      {name}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
+                        {/* Note linking to Assistant Ustaz tab if any assistant feedback was submitted in this class */}
+                        {(assistantNames.length > 0 || assistantStrengths.length > 0 || assistantImprovements.length > 0) && (
+                          <div className="p-3 rounded-xl bg-blue-50/60 border border-blue-200/80 flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2 text-blue-900 font-medium">
+                              <UserCheck className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                              <span>
+                                በዚህ ኡስታዝ ክፍል ውስጥ ለአጋዥ ኡስታዝ የተሰጡ አስተያየቶች አሉ።
+                              </span>
                             </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {/* Assistant Strengths */}
-                              <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-100 space-y-2.5">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-1.5 text-blue-900 font-bold text-xs">
-                                    <ThumbsUp className="w-4 h-4 text-blue-600" />
-                                    <span>5. የአጋዥ ኡስታዙ ጥሩ ጎን</span>
-                                  </div>
-                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-900">
-                                    {assistantStrengths.length} ተማሪዎች
-                                  </span>
-                                </div>
-                                {assistantStrengths.length === 0 ? (
-                                  <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
-                                ) : (
-                                  <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-blue-100/60 max-h-56 overflow-y-auto pr-1">
-                                    {assistantStrengths.map((as, idx) => (
-                                      <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
-                                        &bull; &ldquo;{as}&rdquo;
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-
-                              {/* Assistant Improvements */}
-                              <div className="p-4 rounded-xl bg-orange-50/50 border border-orange-100 space-y-2.5">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-1.5 text-orange-900 font-bold text-xs">
-                                    <AlertTriangle className="w-4 h-4 text-orange-600" />
-                                    <span>6. በአጋዥ ኡስታዙ መሻሻል ያለበት</span>
-                                  </div>
-                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-900">
-                                    {assistantImprovements.length} ተማሪዎች
-                                  </span>
-                                </div>
-                                {assistantImprovements.length === 0 ? (
-                                  <p className="text-xs text-slate-400 italic">ምንም አልተጻፈም</p>
-                                ) : (
-                                  <ul className="space-y-1.5 text-xs text-slate-800 divide-y divide-orange-100/60 max-h-56 overflow-y-auto pr-1">
-                                    {assistantImprovements.map((ai, idx) => (
-                                      <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
-                                        &bull; &ldquo;{ai}&rdquo;
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Assistant Additional */}
-                            {assistantAdditional.length > 0 && (
-                              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                                <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                                  <div className="flex items-center gap-1.5">
-                                    <MessageCircle className="w-4 h-4 text-slate-500" />
-                                    <span>7. በአጋዥ ኡስታዙ ተጨማሪ አስተያየት</span>
-                                  </div>
-                                  <span className="text-[11px] font-semibold text-slate-500">
-                                    {assistantAdditional.length} ተማሪዎች
-                                  </span>
-                                </div>
-                                <ul className="space-y-1.5 text-xs text-slate-700 divide-y divide-slate-200 max-h-48 overflow-y-auto pr-1">
-                                  {assistantAdditional.map((aa, idx) => (
-                                    <li key={idx} className="pt-1.5 first:pt-0 leading-relaxed" dir="auto">
-                                      &bull; &ldquo;{aa}&rdquo;
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
+                            <Link
+                              to="/assistant-comments"
+                              className="font-bold text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 flex-shrink-0"
+                            >
+                              <span>በአጋዥ ኡስታዝ ታብ ይመልከቱ &rarr;</span>
+                            </Link>
                           </div>
                         )}
 

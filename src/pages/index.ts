@@ -6,6 +6,7 @@ export { UstazesPage } from './UstazesPage';
 export { QuestionsPage } from './QuestionsPage';
 export { EvaluationsPage } from './EvaluationsPage';
 export { CommentsPage } from './CommentsPage';
+export { AssistantCommentsPage } from './AssistantCommentsPage';
 export { UsersPage } from './UsersPage';
 export { AuditLogsPage } from './AuditLogsPage';
 export { SettingsPage } from './SettingsPage';
